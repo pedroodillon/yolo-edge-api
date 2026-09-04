@@ -20,3 +20,8 @@ images/
 
 # Variáveis de ambiente locais
 .env
+
+
+# Artefatos gerados pelos experimentos de pré-processamento
+preprocessing/outputs/
+runs/

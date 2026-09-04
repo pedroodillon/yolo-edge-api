@@ -29,6 +29,7 @@ RUN pip install --default-timeout=1000 --no-cache-dir \
 
 # Copia o código da aplicação
 COPY app/ .
+COPY preprocessing/ ./preprocessing/
 
 EXPOSE 8000 5000
 

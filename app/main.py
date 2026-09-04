@@ -19,6 +19,8 @@ from schemas import (
     PredictResponse,
 )
 
+from preprocessing.preprocessor import CONFIG_DEFAULT, Preprocessor
+
 
 def log_event(event: str, level: str = "INFO", **kwargs):
     """Emite um evento estruturado em JSON para stdout."""
@@ -56,7 +58,7 @@ _metrics = {
     "total_ms": 0.0,
 }
 
-
+_preprocessor = Preprocessor(CONFIG_DEFAULT)
 def _decode_image(image_base64: str) -> np.ndarray:
     """Converte base64 → numpy array RGB."""
     raw = base64.b64decode(image_base64)
@@ -93,40 +95,65 @@ def _run_inference(
 ) -> PredictResponse:
     model = load_model(model_name)
 
-    t0 = time.perf_counter()
+    # _decode_image retorna RGB, enquanto o Preprocessor
+    # recebe originalmente um frame BGR.
+    frame_bgr = image_np[:, :, ::-1]
+    preprocess_result = _preprocessor.process(frame_bgr)
+    frame_ready = preprocess_result.frame
+
+    start_time = time.perf_counter()
 
     results = model(
-        image_np,
+        frame_ready,
         conf=confidence,
         verbose=False,
     )
 
-    elapsed_ms = (time.perf_counter() - t0) * 1000
+    elapsed_ms = (
+        time.perf_counter() - start_time
+    ) * 1000
 
     detections = []
 
-    for r in results:
-        for box in r.boxes:
-            coords = box.xyxy[0].tolist()
-            cls_id = int(box.cls[0].item())
-            conf_val = float(box.conf[0].item())
+    for result in results:
+        for box in result.boxes:
+            bbox_letterboxed = (
+                box.xyxy[0]
+                .cpu()
+                .numpy()
+                .reshape(1, 4)
+            )
+
+            bbox_original = _preprocessor.adjust_boxes(
+                bbox_letterboxed,
+                preprocess_result,
+            )[0]
+
+            class_id = int(box.cls[0].item())
+            confidence_value = float(box.conf[0].item())
 
             detections.append(
                 Detection(
-                    label=model.names[cls_id],
-                    confidence=round(conf_val, 4),
-                    bbox=[round(float(c), 2) for c in coords],
+                    label=model.names[class_id],
+                    confidence=round(
+                        confidence_value,
+                        4,
+                    ),
+                    bbox=[
+                        round(float(coordinate), 2)
+                        for coordinate in bbox_original
+                    ],
                 )
             )
 
-    h, w = image_np.shape[:2]
+    height, width = image_np.shape[:2]
 
     return PredictResponse(
         detections=detections,
         inference_ms=round(elapsed_ms, 2),
         model_used=model_name,
-        image_width=w,
-        image_height=h,
+        image_width=width,
+        image_height=height,
     )
 
 
