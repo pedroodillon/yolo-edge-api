@@ -1,11 +1,19 @@
 FROM python:3.11-slim-bookworm
 
-# Instala dependências do sistema + curl para o healthcheck
+# Dependências do sistema e repositório oficial da Raspberry Pi
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
     libgl1 \
     libglib2.0-0 \
-    libgomp1 \
-    curl && \
+    libgomp1 && \
+    curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
+      | gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] http://archive.raspberrypi.com/debian/ bookworm main" \
+      > /etc/apt/sources.list.d/raspberrypi.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends rpicam-apps-lite && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -13,13 +21,15 @@ WORKDIR /app
 # Cache de camadas para dependências Python
 COPY app/requirements.txt .
 
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
-RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir torch torchvision \
+    --index-url https://download.pytorch.org/whl/cpu
 
-# Copia código da aplicação
+RUN pip install --default-timeout=1000 --no-cache-dir \
+    -r requirements.txt
+
+# Copia o código da aplicação
 COPY app/ .
 
-EXPOSE 8000
+EXPOSE 8000 5000
 
-# Executa o Uvicorn
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
