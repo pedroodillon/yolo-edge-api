@@ -1,11 +1,10 @@
 import base64
-import os
 import json
+import os
 import time
 from pathlib import Path
 
 import httpx
-
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 IMAGES_DIR = Path("/client/images")
@@ -153,7 +152,7 @@ if __name__ == "__main__":
             run_batch_inference(images)
 
     # Consulta métricas ao final
-    metrics = httpx.get(f"{API_URL}/metrics").json()
+    metrics = httpx.get(f"{API_URL}/metrics/json").json()
 
     print("\n─── Métricas da API ───")
     print(

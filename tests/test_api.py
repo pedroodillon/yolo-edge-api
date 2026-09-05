@@ -4,20 +4,18 @@ Cobertura: smoke test, unit tests e integration test da YOLO Inference API.
 Pré-requisito: models/yolov8n.pt presente no sistema de arquivos.
 """
 import base64
+import binascii
 import io
-import json
 import os
+import sys
 from pathlib import Path
-
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-
 # Ajusta o PYTHONPATH: raiz do projeto (para "app" ser pacote) e app/ (para os imports internos de main.py, como "from schemas import ...")
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "app"))
 
@@ -25,8 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "app"))
 os.environ.setdefault("MODEL_NAME", "yolov8n.pt")
 
 
-from app.main import app, _decode_image
-
+from app.main import _decode_image, app
 
 client = TestClient(app)
 
@@ -57,9 +54,22 @@ class TestSmoke:
 
 
     def test_metrics_endpoint_accessible(self):
-        """Endpoint /metrics deve estar acessível."""
+        """Endpoint /metrics deve expor métricas Prometheus."""
         resp = client.get("/metrics")
+
         assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/plain")
+        assert "yolo_inference_time_seconds" in resp.text
+
+    def test_json_metrics_endpoint_preserved(self):
+        """Endpoint legado de métricas deve permanecer disponível."""
+        resp = client.get("/metrics/json")
+        data = resp.json()
+
+        assert resp.status_code == 200
+        assert "total_requests" in data
+        assert "successful_requests" in data
+        assert "avg_inference_ms" in data
 
 
 
@@ -93,7 +103,7 @@ class TestDecodeImage:
 
 
     def test_invalid_base64_raises(self):
-        with pytest.raises(Exception):
+        with pytest.raises(binascii.Error):
             _decode_image("dado_invalido_nao_e_base64")
 
 
@@ -153,6 +163,22 @@ class TestPredictEndpoint:
             assert 0.0 <= det["confidence"] <= 1.0
             assert len(det["bbox"]) == 4
 
+
+    def test_predict_updates_prometheus_metric(self, zidane_b64):
+        """Inferência deve atualizar a métrica Prometheus."""
+        resp = client.post(
+            "/predict",
+            json={
+                "image_base64": zidane_b64,
+                "confidence": 0.3,
+            },
+        )
+
+        assert resp.status_code == 200
+
+        metrics_text = client.get("/metrics").text
+        assert "yolo_inference_time_seconds{" in metrics_text
+        assert 'imgsz="320"' in metrics_text
 
     def test_predict_missing_input_returns_422(self):
         """Requisição sem imagem deve retornar HTTP 422."""

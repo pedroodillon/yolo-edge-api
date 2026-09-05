@@ -9,6 +9,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Response
 from model import get_default_model_name, load_model
 from PIL import Image
+from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
 from schemas import (
     BatchPredictRequest,
     BatchPredictResponse,
@@ -49,6 +50,12 @@ app = FastAPI(
     version="1.0.0",
 )
 
+YOLO_INFERENCE_TIME_SECONDS = Gauge(
+    "yolo_inference_time_seconds",
+    "Tempo da ultima inferencia YOLO em segundos.",
+    ["model", "imgsz"],
+)
+
 
 # ── Métricas simples em memória ─────────────────────────────
 
@@ -59,6 +66,8 @@ _metrics = {
 }
 
 _preprocessor = Preprocessor(CONFIG_DEFAULT)
+
+
 def _decode_image(image_base64: str) -> np.ndarray:
     """Converte base64 → numpy array RGB."""
     raw = base64.b64decode(image_base64)
@@ -109,9 +118,13 @@ def _run_inference(
         verbose=False,
     )
 
-    elapsed_ms = (
-        time.perf_counter() - start_time
-    ) * 1000
+    elapsed_seconds = time.perf_counter() - start_time
+    imgsz = str(max(frame_ready.shape[:2]))
+    YOLO_INFERENCE_TIME_SECONDS.labels(
+        model=model_name,
+        imgsz=imgsz,
+    ).set(elapsed_seconds)
+    elapsed_ms = elapsed_seconds * 1000
 
     detections = []
 
@@ -300,7 +313,12 @@ def predict_image(request: PredictRequest):
             verbose=False,
         )
 
-        elapsed_ms = (time.perf_counter() - t0) * 1000
+        elapsed_seconds = time.perf_counter() - t0
+        YOLO_INFERENCE_TIME_SECONDS.labels(
+            model=request.model_name,
+            imgsz="640",
+        ).set(elapsed_seconds)
+        elapsed_ms = elapsed_seconds * 1000
 
         _metrics["success"] += 1
         _metrics["total_ms"] += elapsed_ms
@@ -365,8 +383,16 @@ def predict_batch(request: BatchPredictRequest):
     )
 
 
-@app.get("/metrics", response_model=MetricsResponse)
-async def get_metrics():
+@app.get("/metrics")
+async def prometheus_metrics():
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
+
+
+@app.get("/metrics/json", response_model=MetricsResponse)
+async def get_metrics_json():
     avg = (
         _metrics["total_ms"] / _metrics["success"]
         if _metrics["success"] > 0
